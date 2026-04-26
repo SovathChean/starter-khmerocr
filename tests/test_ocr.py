@@ -6,6 +6,7 @@ from PIL import Image
 
 from app.dependencies import (
     get_easyocr_service,
+    get_kiri_service,
     get_paddleocr_service,
     get_tesseract_service,
 )
@@ -26,7 +27,7 @@ class StubService:
         self.name = name
         self._result = result
 
-    def recognize(self, image, lang):
+    def recognize(self, image, **kwargs):
         return self._result
 
 
@@ -103,6 +104,48 @@ def test_paddleocr_endpoint_returns_text():
     assert body["engine"] == "paddleocr"
     assert body["text"] == "from paddle"
     assert body["languages"] == ["ch"]
+
+
+def test_kiri_endpoint_returns_text():
+    _override(
+        get_kiri_service,
+        "kiri",
+        OCRResult(
+            text="សួស្តី Hello",
+            languages=["khm", "eng"],
+            note="decode_method=accurate",
+        ),
+    )
+    files = {"file": ("t.png", _png_bytes(), "image/png")}
+    response = client.post("/ocr/kiri", files=files)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["engine"] == "kiri"
+    assert body["languages"] == ["khm", "eng"]
+    assert body["text"] == "សួស្តី Hello"
+    assert body["note"] == "decode_method=accurate"
+
+
+def test_kiri_endpoint_forwards_decode_method():
+    captured: dict = {}
+
+    class CapturingService:
+        name = "kiri"
+
+        def recognize(self, image, **kwargs):
+            captured.update(kwargs)
+            return OCRResult(
+                text="ok",
+                languages=["khm", "eng"],
+                note=f"decode_method={kwargs.get('decode_method')}",
+            )
+
+    app.dependency_overrides[get_kiri_service] = lambda: CapturingService()
+    files = {"file": ("t.png", _png_bytes(), "image/png")}
+    response = client.post("/ocr/kiri?decode_method=beam", files=files)
+    assert response.status_code == 200
+    assert captured == {"decode_method": "beam"}
+    assert response.json()["note"] == "decode_method=beam"
 
 
 def test_rejects_non_image():

@@ -17,6 +17,14 @@ brew install tesseract tesseract-lang   # tesseract-lang provides khm.traineddat
 tesseract --list-langs                  # confirm "eng" and "khm" appear
 ```
 
+Kiri OCR install (needs `--no-deps` on macOS — its `pyproject.toml` requires `onnxruntime-gpu`, which is Linux-CUDA only; we already pulled the CPU `onnxruntime` via `requirements.txt`):
+
+```bash
+pip install --no-deps git+https://github.com/mrrtmob/kiri-ocr.git
+```
+
+Kiri auto-downloads its weights from Hugging Face on first call (cached under `~/.cache/huggingface/`). The PyPI release `kiri-ocr 0.2.2` is **not** compatible with the current HF model — install from GitHub `main` as shown above.
+
 ## Run
 
 ```bash
@@ -33,13 +41,14 @@ pytest
 
 ## OCR engines
 
-Three POST endpoints, each accepting `multipart/form-data` with a single field `file`:
+Four POST endpoints, each accepting `multipart/form-data` with a single field `file`:
 
-| Endpoint | Default lang | Override |
+| Endpoint | Default | Override |
 | --- | --- | --- |
-| `POST /ocr/tesseract` | `eng+khm` | `?lang=eng` or `?lang=khm` |
-| `POST /ocr/easyocr`   | `en` (no Khmer model — falls back with a `note`) | `?lang=en,fr` |
-| `POST /ocr/paddleocr` | `ch` | `?lang=en`, `?lang=korean`, etc. |
+| `POST /ocr/tesseract` | `lang=eng+khm` | `?lang=eng` or `?lang=khm` |
+| `POST /ocr/easyocr`   | `lang=en` (no Khmer model — falls back with a `note`) | `?lang=en,fr` |
+| `POST /ocr/paddleocr` | `lang=en` | `?lang=ch`, `?lang=korean`, etc. (no Khmer model) |
+| `POST /ocr/kiri`      | `decode_method=accurate` (Khmer+English native) | `?decode_method=fast` or `?decode_method=beam` |
 
 Try it:
 
@@ -47,9 +56,10 @@ Try it:
 curl -F "file=@sample.png" http://localhost:8000/ocr/tesseract
 curl -F "file=@sample.png" http://localhost:8000/ocr/easyocr
 curl -F "file=@sample.png" http://localhost:8000/ocr/paddleocr
+curl -F "file=@sample.png" http://localhost:8000/ocr/kiri
 ```
 
-The first call to EasyOCR or PaddleOCR downloads model weights and is slow; subsequent calls reuse the cached engine.
+The first call to EasyOCR, PaddleOCR, and Kiri downloads model weights and is slow; subsequent calls reuse the cached engine. Kiri caches its model under `~/.cache/huggingface/`.
 
 ## Layout
 
@@ -67,6 +77,7 @@ app/
     tesseract.py      TesseractOCRService
     easyocr.py        EasyOCRService (with lru_cache lazy reader)
     paddleocr.py      PaddleOCRService (with lru_cache lazy engine)
+    kiri.py           KiriOCRService — Khmer+English native (mrrtmob/kiri-ocr)
 tests/
   test_health.py      smoke test with TestClient
   test_ocr.py         OCR endpoint tests via app.dependency_overrides

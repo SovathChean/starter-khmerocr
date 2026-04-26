@@ -7,3 +7,5 @@ pytesseract>=0.3.10
 easyocr>=1.7.1
 paddleocr>=2.7.0
 paddlepaddle>=2.6.0
+# Kiri OCR — see README for install instructions (needs --no-deps on macOS, pulls onnxruntime-gpu by default which is CUDA-only).
+onnxruntime>=1.18

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.dependencies import (
     get_easyocr_service,
+    get_kiri_service,
     get_paddleocr_service,
     get_tesseract_service,
 )
@@ -14,11 +15,11 @@ from app.services.base import OCRService
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 
-async def _run(service: OCRService, file: UploadFile, lang: str | None) -> OCRResponse:
+async def _run(service: OCRService, file: UploadFile, **kwargs) -> OCRResponse:
     image = await load_image_from_upload(file)
     start = time.perf_counter()
     try:
-        result = service.recognize(image, lang)
+        result = service.recognize(image, **kwargs)
     except HTTPException:
         raise
     except Exception as exc:
@@ -39,7 +40,7 @@ async def ocr_tesseract(
     lang: str | None = Query(None, description="Tesseract lang code, e.g. 'eng', 'khm', 'eng+khm'"),
     service: OCRService = Depends(get_tesseract_service),
 ) -> OCRResponse:
-    return await _run(service, file, lang)
+    return await _run(service, file, lang=lang)
 
 
 @router.post("/easyocr", response_model=OCRResponse)
@@ -48,7 +49,7 @@ async def ocr_easyocr(
     lang: str | None = Query(None, description="Comma-separated EasyOCR lang codes, e.g. 'en' or 'en,fr'"),
     service: OCRService = Depends(get_easyocr_service),
 ) -> OCRResponse:
-    return await _run(service, file, lang)
+    return await _run(service, file, lang=lang)
 
 
 @router.post("/paddleocr", response_model=OCRResponse)
@@ -57,4 +58,16 @@ async def ocr_paddleocr(
     lang: str | None = Query(None, description="PaddleOCR lang code, e.g. 'ch', 'en', 'korean'"),
     service: OCRService = Depends(get_paddleocr_service),
 ) -> OCRResponse:
-    return await _run(service, file, lang)
+    return await _run(service, file, lang=lang)
+
+
+@router.post("/kiri", response_model=OCRResponse)
+async def ocr_kiri(
+    file: UploadFile = File(...),
+    decode_method: str = Query(
+        "accurate",
+        description="Kiri decode method: 'fast' (CTC), 'accurate' (default), or 'beam' (best quality)",
+    ),
+    service: OCRService = Depends(get_kiri_service),
+) -> OCRResponse:
+    return await _run(service, file, decode_method=decode_method)

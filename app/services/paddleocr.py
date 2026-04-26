@@ -11,24 +11,22 @@ from app.services.base import OCRService
 def _paddle_engine(lang: str):
     from paddleocr import PaddleOCR
 
-    return PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+    return PaddleOCR(lang=lang)
 
 
 class PaddleOCRService(OCRService):
     name = "paddleocr"
-    default_lang = "ch"
+    default_lang = "en"
 
-    def recognize(self, image: Image.Image, lang: str | None) -> OCRResult:
+    def recognize(self, image: Image.Image, lang: str | None = None) -> OCRResult:
         used_lang = lang or self.default_lang
         engine = _paddle_engine(used_lang)
-        result = engine.ocr(np.array(image), cls=True)
+        results = engine.predict(np.array(image))
 
         lines: list[str] = []
-        for page in result or []:
-            if not page:
-                continue
-            for entry in page:
-                if entry and len(entry) >= 2 and entry[1]:
-                    lines.append(entry[1][0])
+        for r in results or []:
+            texts = r.get("rec_texts") if hasattr(r, "get") else None
+            if texts:
+                lines.extend(t for t in texts if t)
 
         return OCRResult(text="\n".join(lines), languages=[used_lang])

@@ -18,7 +18,7 @@ class EasyOCRService(OCRService):
     name = "easyocr"
     default_lang = "en"
 
-    def recognize(self, image: Image.Image, lang: str | None) -> OCRResult:
+    def recognize(self, image: Image.Image, lang: str | None = None) -> OCRResult:
         requested = lang or self.default_lang
         note: str | None = None
         codes = requested.split(",")

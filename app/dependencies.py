@@ -1,8 +1,14 @@
-from app.services import EasyOCRService, PaddleOCRService, TesseractOCRService
+from app.services import (
+    EasyOCRService,
+    KiriOCRService,
+    PaddleOCRService,
+    TesseractOCRService,
+)
 
 _tesseract = TesseractOCRService()
 _easyocr = EasyOCRService()
 _paddleocr = PaddleOCRService()
+_kiri = KiriOCRService()
 
 
 def get_tesseract_service() -> TesseractOCRService:
@@ -15,3 +21,7 @@ def get_easyocr_service() -> EasyOCRService:
 
 def get_paddleocr_service() -> PaddleOCRService:
     return _paddleocr
+
+
+def get_kiri_service() -> KiriOCRService:
+    return _kiri
