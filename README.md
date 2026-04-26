@@ -48,7 +48,8 @@ Four POST endpoints, each accepting `multipart/form-data` with a single field `f
 | `POST /ocr/tesseract` | `lang=eng+khm` | `?lang=eng` or `?lang=khm` |
 | `POST /ocr/easyocr`   | `lang=en` (no Khmer model — falls back with a `note`) | `?lang=en,fr` |
 | `POST /ocr/paddleocr` | `lang=en` | `?lang=ch`, `?lang=korean`, etc. (no Khmer model) |
-| `POST /ocr/kiri`      | `decode_method=accurate` (Khmer+English native) | `?decode_method=fast` or `?decode_method=beam` |
+| `POST /ocr/kiri`      | `decode_method=accurate` `mode=full` | `?decode_method=fast\|beam`, `?mode=line` (single-line recognizer that skips Kiri's text detector — use on tightly-cropped lines) |
+| `POST /ocr/khmer-id-name` | n/a | Auto-locates the Khmer name line on a Cambodian ID, returns Tesseract + Kiri readings of the cropped name (see below) |
 
 Try it:
 
@@ -61,13 +62,41 @@ curl -F "file=@sample.png" http://localhost:8000/ocr/kiri
 
 The first call to EasyOCR, PaddleOCR, and Kiri downloads model weights and is slow; subsequent calls reuse the cached engine. Kiri caches its model under `~/.cache/huggingface/`.
 
+### Extracting the Khmer name from an ID card
+
+Tesseract on the full ID image bleeds Latin glyphs from the English transliteration onto the Khmer name (`HO 9ាជ្រ...`) and Kiri's text detector sometimes locks onto the digit row instead of the name. `POST /ocr/khmer-id-name` works around both:
+
+1. Run Tesseract `image_to_data` on the whole image to find the topmost line containing `នាម`.
+2. Locate the colon inside that line — split into a label region and a name region.
+3. Clamp the line bottom at ~1.5× the label height (otherwise long subscripts like `្រ` make Tesseract's bbox extend down into the English transliteration line below).
+4. Run **Tesseract `psm=7 lang=khm`** on the full line *and* on the name-only crop.
+5. Run **Kiri's `recognize_single_line_image`** (skips Kiri's broken detector) on the name-only crop.
+
+The response returns **four** independent readings of the name:
+
+| Field | Source | Best for |
+|---|---|---|
+| `name_after_colon` | Tesseract on the full line, then `split(":")` | **Often the most accurate** — the full-line OCR has more context and the post-split removes the label noise |
+| `name_tesseract` | Tesseract directly on the name-only crop | Falls back to `psm=8` (single-word) for short crops |
+| `name_kiri_single_line` | Kiri's `recognize_single_line_image` on the name-only crop | Often gets surname clusters Tesseract misses |
+| `full_line_tesseract` | Raw Tesseract output of the whole label+name line | Useful for debugging / comparing |
+
+Plus the detected `line_bbox` and `name_bbox` so you can verify the crop visually. The four readings have complementary failure modes — compare them to ensemble or pick the right one per ID.
+
+The endpoint also adapts to small images (e.g. phone screenshots): if the detected line is shorter than ~150 px tall, it upscales the crop with Lanczos before passing to OCR.
+
+```bash
+curl -F "file=@my-id.jpg" http://localhost:8000/ocr/khmer-id-name
+```
+
 ## Layout
 
 ```
 app/
   main.py             FastAPI app factory
-  schemas.py          OCRResponse (API) + OCRResult (internal)
+  schemas.py          OCRResponse + OCRResult + KhmerIDNameResponse
   images.py           shared upload-to-PIL.Image helper
+  khmer_id.py         Cambodian ID layout helpers (locate_name_line)
   dependencies.py     FastAPI providers for each OCR service
   routers/
     health.py         / and /health endpoints

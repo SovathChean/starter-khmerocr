@@ -126,7 +126,7 @@ def test_kiri_endpoint_returns_text():
     assert body["note"] == "decode_method=accurate"
 
 
-def test_kiri_endpoint_forwards_decode_method():
+def test_kiri_endpoint_forwards_decode_method_and_mode():
     captured: dict = {}
 
     class CapturingService:
@@ -137,15 +137,72 @@ def test_kiri_endpoint_forwards_decode_method():
             return OCRResult(
                 text="ok",
                 languages=["khm", "eng"],
-                note=f"decode_method={kwargs.get('decode_method')}",
+                note=f"decode_method={kwargs.get('decode_method')}; mode={kwargs.get('mode')}",
             )
 
     app.dependency_overrides[get_kiri_service] = lambda: CapturingService()
     files = {"file": ("t.png", _png_bytes(), "image/png")}
-    response = client.post("/ocr/kiri?decode_method=beam", files=files)
+    response = client.post("/ocr/kiri?decode_method=beam&mode=line", files=files)
     assert response.status_code == 200
-    assert captured == {"decode_method": "beam"}
-    assert response.json()["note"] == "decode_method=beam"
+    assert captured == {"decode_method": "beam", "mode": "line"}
+    assert response.json()["note"] == "decode_method=beam; mode=line"
+
+
+def test_khmer_id_name_no_line_found(monkeypatch):
+    """When Tesseract finds no line containing 'នាម' on the image, return 404."""
+    import app.routers.ocr as ocr_mod
+    monkeypatch.setattr(ocr_mod, "locate_name_line", lambda image: None)
+    files = {"file": ("t.png", _png_bytes(), "image/png")}
+    response = client.post("/ocr/khmer-id-name", files=files)
+    assert response.status_code == 404
+    assert "name line" in response.json()["detail"].lower()
+
+
+def test_khmer_id_name_returns_combined_payload(monkeypatch):
+    """Locate is stubbed; both Tesseract calls and Kiri are stubbed.
+    Verifies the response shape and that all three readings flow through."""
+    import app.routers.ocr as ocr_mod
+    from app.khmer_id import KhmerIDNameLocation
+
+    fake_loc = KhmerIDNameLocation(
+        line_bbox=(100, 50, 800, 200),
+        name_bbox=(400, 50, 800, 200),
+        label_text="គោត្តនាមនិងនាម: ...",
+    )
+    monkeypatch.setattr(ocr_mod, "locate_name_line", lambda image: fake_loc)
+
+    tess_calls = []
+
+    def fake_image_to_string(image, lang=None, config=None):
+        tess_calls.append((image.size, lang, config))
+        # First call is the wide line ("LABEL:NAME"); second is the name-only crop
+        return "LABEL៖TESS_FULL_LINE" if len(tess_calls) == 1 else "TESS_NAME_ONLY"
+
+    monkeypatch.setattr(ocr_mod.pytesseract, "image_to_string", fake_image_to_string)
+
+    class FakeKiri:
+        name = "kiri"
+        def recognize(self, image, **kwargs):
+            return OCRResult(
+                text="KIRI_NAME",
+                languages=["khm", "eng"],
+                note=f"mode={kwargs.get('mode')}",
+            )
+
+    app.dependency_overrides[get_kiri_service] = lambda: FakeKiri()
+
+    files = {"file": ("t.png", _png_bytes(size=(900, 250)), "image/png")}
+    response = client.post("/ocr/khmer-id-name", files=files)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["line_bbox"] == [100, 50, 800, 200]
+    assert body["name_bbox"] == [400, 50, 800, 200]
+    assert body["full_line_tesseract"] == "LABEL៖TESS_FULL_LINE"
+    assert body["name_after_colon"] == "TESS_FULL_LINE"
+    assert body["name_tesseract"] == "TESS_NAME_ONLY"
+    assert body["name_kiri_single_line"] == "KIRI_NAME"
+    assert body["kiri_note"] == "mode=line"
+    assert len(tess_calls) == 2
 
 
 def test_rejects_non_image():
