@@ -1,0 +1,18 @@
+services:
+  api:
+    build: .
+    image: khmerid-ocr
+    container_name: khmerid-ocr
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - hf-cache:/root/.cache/huggingface
+      - easyocr-cache:/root/.EasyOCR
+      - paddleocr-cache:/root/.paddleocr
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  hf-cache:
+  easyocr-cache:
+  paddleocr-cache:

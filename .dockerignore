@@ -1,0 +1,11 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.python-version
+tests
+README.md
+**/__pycache__
+*.pyc
+.DS_Store
+.claude
