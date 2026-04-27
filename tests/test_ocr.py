@@ -148,6 +148,40 @@ def test_kiri_endpoint_forwards_decode_method_and_mode():
     assert response.json()["note"] == "decode_method=beam; mode=line"
 
 
+def test_locate_name_line_falls_back_when_keyword_misread(monkeypatch):
+    """When Tesseract misreads 'នាម' (e.g. as 'នាទ'), the keyword search fails
+    but the structural fallback should still find the topmost line with a colon
+    in the upper half of the image."""
+    from PIL import Image as _Image
+    import pytesseract as _pyt
+    from app import khmer_id
+
+    fake_data = {
+        # Note: the first word is a misread of "គោត្តនាមនិងនាម:ជាន" — no "នាម"
+        # substring survives, but the colon does. The fallback should still pick
+        # this line because it's the topmost in the upper half with a colon.
+        "text":      ["ទូនាទនិងខាទ:បាន", "ស៊ីវិន",
+                      "ថ្ងៃខែឆ្នាំកំណើត:", "០១.០៩.១៩៩៦"],
+        "left":      [200, 700, 200, 600],
+        "top":       [50, 50, 200, 200],
+        "width":     [400, 150, 350, 200],
+        "height":    [80, 80, 80, 80],
+        "conf":      [40, 75, 80, 70],
+        "block_num": [1, 1, 1, 1],
+        "par_num":   [1, 1, 1, 1],
+        "line_num":  [1, 1, 2, 2],   # two lines: name (no នាម due to misread) + DOB
+    }
+    monkeypatch.setattr(_pyt, "image_to_data", lambda *a, **kw: fake_data)
+
+    img = _Image.new("RGB", (1800, 1000), "white")  # tall enough that y=50 is in upper half
+    loc = khmer_id.locate_name_line(img)
+    assert loc is not None, "fallback should have found the colon-bearing top line"
+    # The fallback line top is 50, name region starts after the colon proportionally
+    assert loc.line_bbox[1] == 50
+    # The label text is whatever Tesseract returned for the topmost line
+    assert "បាន" in loc.label_text  # the misread first name
+
+
 def test_khmer_id_name_no_line_found(monkeypatch):
     """When Tesseract finds no line containing 'នាម' on the image, return 404."""
     import app.routers.ocr as ocr_mod
@@ -191,7 +225,9 @@ def test_khmer_id_name_returns_combined_payload(monkeypatch):
 
     app.dependency_overrides[get_kiri_service] = lambda: FakeKiri()
 
-    files = {"file": ("t.png", _png_bytes(size=(900, 250)), "image/png")}
+    # Use an image already at/above UPSCALE_TARGET_WIDTH so the router doesn't
+    # upscale (which would scale bboxes back to original coords for the response).
+    files = {"file": ("t.png", _png_bytes(size=(1800, 500)), "image/png")}
     response = client.post("/ocr/khmer-id-name", files=files)
     assert response.status_code == 200, response.text
     body = response.json()

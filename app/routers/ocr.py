@@ -11,7 +11,7 @@ from app.dependencies import (
     get_tesseract_service,
 )
 from app.images import load_image_from_upload
-from app.khmer_id import extract_after_colon, locate_name_line, pad_bbox
+from app.khmer_id import _upscaled_for_ocr, extract_after_colon, locate_name_line, pad_bbox
 from app.schemas import KhmerIDNameResponse, OCRResponse
 from app.services.base import OCRService
 from app.services.kiri import KiriOCRService
@@ -82,12 +82,18 @@ async def ocr_khmer_id_name(
 ) -> KhmerIDNameResponse:
     image = await load_image_from_upload(file)
 
-    location = locate_name_line(image)
+    # Pre-upscale small inputs ONCE at the source level. Cropping the upscaled
+    # image preserves Lanczos-interpolated detail in the line/name crops, which
+    # is materially better than locating on upscaled and cropping the tiny
+    # original (the latter just blows up a near-empty bbox).
+    work_image, src_factor = _upscaled_for_ocr(image)
+
+    location = locate_name_line(work_image)
     if location is None:
         raise HTTPException(status_code=404, detail="Could not locate the Khmer name line on this image")
 
-    line_crop = image.crop(pad_bbox(location.line_bbox, image.size, pad=20))
-    name_crop = image.crop(pad_bbox(location.name_bbox, image.size, pad=15))
+    line_crop = work_image.crop(pad_bbox(location.line_bbox, work_image.size, pad=20))
+    name_crop = work_image.crop(pad_bbox(location.name_bbox, work_image.size, pad=15))
 
     # Tesseract LSTM and Kiri both struggle when the line height is below ~80 px.
     # When the source ID image is small (e.g. a phone screenshot), upscale so the
@@ -116,9 +122,19 @@ async def ocr_khmer_id_name(
     tess_name = _tess(name_for_ocr, (7, 8))
     kiri_result = kiri.recognize(name_for_ocr, mode="line")
 
+    # Translate bboxes back to ORIGINAL image coordinates for the response so
+    # the caller can refer them to their input image.
+    if src_factor != 1.0:
+        s = 1.0 / src_factor
+        resp_line_bbox = [int(b * s) for b in location.line_bbox]
+        resp_name_bbox = [int(b * s) for b in location.name_bbox]
+    else:
+        resp_line_bbox = list(location.line_bbox)
+        resp_name_bbox = list(location.name_bbox)
+
     return KhmerIDNameResponse(
-        line_bbox=list(location.line_bbox),
-        name_bbox=list(location.name_bbox),
+        line_bbox=resp_line_bbox,
+        name_bbox=resp_name_bbox,
         full_line_tesseract=tess_full,
         name_after_colon=extract_after_colon(tess_full),
         name_tesseract=tess_name,
